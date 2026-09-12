@@ -1,0 +1,27 @@
+# Virtual environment. Never commit this: it's hundreds of MB and
+# machine-specific; requirements.txt is how others recreate it.
+venv/
+.venv/
+
+# Python bytecode cache, generated automatically when you run code.
+__pycache__/
+*.py[cod]
+
+# Model weights. YOLO downloads these on first run (tens of MB).
+# GitHub rejects files over 100 MB, so we never commit weights.
+*.pt
+*.onnx
+*.weights
+
+# Sample videos and recorded output. Too big for git.
+videos/
+output/
+*.mp4
+*.avi
+*.mov
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

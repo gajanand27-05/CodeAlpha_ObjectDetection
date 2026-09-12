@@ -1,0 +1,7 @@
+# torch and torchvision are pulled in by ultralytics. The default PyPI build is
+# CPU-only, which is what the timings in the README were measured on. For an
+# NVIDIA GPU, install the CUDA build first, from https://pytorch.org.
+ultralytics==8.4.150
+opencv-python==5.0.0.93
+scipy==1.18.1
+numpy==2.5.3
