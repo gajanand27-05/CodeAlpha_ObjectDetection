@@ -73,6 +73,33 @@ IoU, and the pairing is chosen by the Hungarian algorithm.
 detections become new tracks, and tracks unmatched for `max_age` frames are
 deleted.
 
+## Three problems that only appeared on real footage
+
+The tracker passed every synthetic test before it ever saw a video. Running it on
+the sample clips exposed three faults that generated boxes could not have shown,
+because all three come from the detector behaving imperfectly rather than from the
+tracker's own logic. Each now has a test of its own.
+
+**A confirmed track went invisible whenever the detector blinked.** The SORT paper
+reports a track when `hit_streak >= min_hits`, and a missed frame resets the streak.
+So a track followed for hundreds of frames had to earn three consecutive detections
+again before being drawn. On the street clip, where confidence hovers near the
+threshold, that blanked out live tracks on 21 frames: the object was detected, the ID
+was intact, and nothing was displayed. Confirmation is now latched, which is what
+Deep SORT's tentative and confirmed states exist for. The remaining 13 blank frames
+are genuinely new objects still inside their `min_hits` warm-up.
+
+**The box vanished on frames the detector missed entirely.** Reporting only tracks
+matched in the current frame meant a large, obvious car disappeared and reappeared.
+The Kalman filter already knew where it was, so a confirmed track now coasts on its
+prediction for a few frames. Coasted boxes are drawn thinner and dimmer and carry a
+`predicted` flag, because a prediction should not be presented as a measurement.
+
+**The class label flickered.** YOLO called the car a bus on exactly one frame out of
+647, and the label followed the latest detection. The reported class is now the
+majority vote over the track's whole life, so one bad frame cannot outvote the
+accumulated evidence, while a genuine, sustained change is still adopted.
+
 ## Three decisions worth explaining
 
 **Area and aspect ratio, not width and height.** The filter tracks box area and
@@ -167,12 +194,13 @@ Useful options:
 | `--max-age` | 30 | Frames a track survives unmatched before deletion |
 | `--min-hits` | 3 | Consecutive detections before a track is shown |
 | `--iou` | 0.3 | Overlap needed to call a detection the same object |
+| `--coast` | 3 | Frames a track keeps being drawn from prediction after a missed detection |
 | `--weights` | yolov8n.pt | Any YOLO checkpoint |
 | `--device` | auto | `cpu`, or `0` for the first GPU |
 
 ## Tests
 
-`python test_tracker.py` runs 21 checks against synthetic trajectories rather than
+`python test_tracker.py` runs 30 checks against synthetic trajectories rather than
 video. A video test would depend on the detector, the weights and the clip all being
 correct at once, so a failure would not say which part broke. With generated boxes
 the input is exact, so any failure belongs to the tracker.
@@ -181,6 +209,11 @@ The cases that matter: one object keeps exactly one ID over 40 frames; two objec
 passing each other do not swap IDs; an object hidden for 5 frames resumes with the
 same ID; a track is deleted after `max_age`; a one-frame detector blip is never
 reported; and a zero-area box does not produce NaN.
+
+Three of the checks were written after real footage exposed the faults described
+above, and exist so those faults cannot come back: a track stays visible through a
+flickering detector, a coasted box is flagged as predicted and keeps moving, and a
+single misclassified frame never changes the displayed label.
 
 ## Project layout
 

@@ -46,14 +46,23 @@ def colour_for_id(track_id: int) -> tuple[int, int, int]:
     return int(b * 255), int(g * 255), int(r * 255)  # OpenCV wants BGR
 
 
-def draw_track(frame: np.ndarray, label: str, bbox: np.ndarray, colour) -> None:
-    """Draw one box with its label sitting above it."""
+def draw_track(frame: np.ndarray, label: str, bbox: np.ndarray, colour,
+               predicted: bool = False) -> None:
+    """Draw one box with its label sitting above it.
+
+    A coasted box, one whose position came from the Kalman filter rather than
+    from a detection this frame, is drawn thinner and dimmer. The distinction
+    is worth showing: a solid box means the detector saw the object, a faint
+    one means the tracker believes it is still there.
+    """
     x1, y1, x2, y2 = (int(round(v)) for v in bbox[:4])
     h, w = frame.shape[:2]
     x1, x2 = max(0, min(x1, w - 1)), max(0, min(x2, w - 1))
     y1, y2 = max(0, min(y1, h - 1)), max(0, min(y2, h - 1))
 
-    cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+    if predicted:
+        colour = tuple(int(c * 0.55) for c in colour)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 1 if predicted else 2)
 
     (tw, th), baseline = cv2.getTextSize(label, FONT, 0.5, 1)
     box_w, box_h = tw + 8, th + baseline + 4
@@ -114,6 +123,9 @@ def main() -> int:
     p.add_argument("--min-hits", type=int, default=3,
                    help="consecutive detections before a track is shown")
     p.add_argument("--iou", type=float, default=0.3, help="IoU threshold for association")
+    p.add_argument("--coast", type=int, default=3,
+                   help="frames a track keeps being drawn from prediction after a missed "
+                        "detection (0 disables)")
     p.add_argument("--save", default=None, help="write the annotated video to this path")
     p.add_argument("--no-show", action="store_true", help="do not open a window")
     p.add_argument("--max-frames", type=int, default=None, help="stop after this many frames")
@@ -124,7 +136,8 @@ def main() -> int:
     print(f"Loading {args.weights} ...")
     detector = Detector(args.weights, conf=args.conf, classes=classes,
                         imgsz=args.imgsz, device=args.device)
-    tracker = Sort(max_age=args.max_age, min_hits=args.min_hits, iou_threshold=args.iou)
+    tracker = Sort(max_age=args.max_age, min_hits=args.min_hits,
+                   iou_threshold=args.iou, coast=args.coast)
 
     cap, is_webcam = open_source(args.source)
     if not cap.isOpened():
@@ -192,7 +205,8 @@ def main() -> int:
 
             for t in tracks:
                 label = f"{class_of_id[t['id']]} {t['id']}"
-                draw_track(frame, label, t["bbox"], colour_for_id(t["id"]))
+                draw_track(frame, label, t["bbox"], colour_for_id(t["id"]),
+                           predicted=t.get("predicted", False))
 
             if writer is not None:
                 writer.write(frame)

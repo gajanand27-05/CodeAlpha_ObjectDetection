@@ -25,6 +25,7 @@ Reference: Bewley et al., "Simple Online and Realtime Tracking" (2016).
 from __future__ import annotations
 
 import numpy as np
+from collections import Counter
 from scipy.optimize import linear_sum_assignment
 
 
@@ -101,8 +102,18 @@ class KalmanBoxTracker:
         self.id = KalmanBoxTracker._next_id
         KalmanBoxTracker._next_id += 1
 
-        self.cls_id = int(cls_id)
         self.score = float(score)
+
+        # Every class this track has been assigned, and how often. The reported
+        # class is the majority vote rather than the latest detection.
+        #
+        # A detector misclassifies on the odd frame: in the sample footage a car
+        # is labelled "bus" for a single frame out of hundreds. Taking the most
+        # recent answer makes the on-screen label flicker between the two, which
+        # looks like the tracker has lost the object when it has not. The vote
+        # is over the whole life of the track, so one bad frame cannot outvote
+        # the accumulated evidence.
+        self.class_votes: Counter[int] = Counter([int(cls_id)])
 
         # State transition: position += velocity on each step.
         self.F = np.eye(7)
@@ -139,6 +150,11 @@ class KalmanBoxTracker:
         self.hit_streak = 0          # consecutive frames matched, resets on a miss
         self.age = 0                 # frames since the track was created
 
+        # Latched once the track has proved itself, and never cleared. See the
+        # note in Sort.update for why a track that has been confirmed must not
+        # be demoted by a single missed frame.
+        self.confirmed = False
+
     def predict(self) -> np.ndarray:
         """Step the state forward one frame and return the predicted box."""
         # Area must not be allowed to go negative: a box cannot have negative
@@ -163,7 +179,7 @@ class KalmanBoxTracker:
         self.time_since_update = 0
         self.hits += 1
         self.hit_streak += 1
-        self.cls_id = int(cls_id)
+        self.class_votes[int(cls_id)] += 1
         self.score = float(score)
 
         z = bbox_to_measurement(bbox).reshape(4, 1)
@@ -177,6 +193,11 @@ class KalmanBoxTracker:
     @property
     def bbox(self) -> np.ndarray:
         return measurement_to_bbox(self.x[:4, 0])
+
+    @property
+    def cls_id(self) -> int:
+        """The class this track has been called most often."""
+        return self.class_votes.most_common(1)[0][0]
 
 
 def associate(
@@ -230,12 +251,29 @@ class Sort:
             produces, at the cost of a short delay before a real object appears.
         iou_threshold: minimum overlap for a detection to be considered the
             same object as a track.
+        coast: frames a confirmed track keeps being reported after a missed
+            detection, using its predicted position. Set to 0 to report only
+            tracks matched in the current frame.
+
+            This is what the Kalman filter is for. A detector drops the
+            occasional frame even on a large, obvious object, and without
+            coasting the box simply vanishes and reappears, which reads as a
+            broken tracker. Reported positions during a gap are predictions
+            rather than measurements, so they are flagged as such in the output
+            and the caller can draw them differently.
     """
 
-    def __init__(self, max_age: int = 30, min_hits: int = 3, iou_threshold: float = 0.3) -> None:
+    def __init__(
+        self,
+        max_age: int = 30,
+        min_hits: int = 3,
+        iou_threshold: float = 0.3,
+        coast: int = 3,
+    ) -> None:
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
+        self.coast = coast
         self.tracks: list[KalmanBoxTracker] = []
         self.frame_count = 0
 
@@ -273,7 +311,10 @@ class Sort:
 
         # 3. UPDATE.
         for d, t in matches:
-            self.tracks[t].update(detections[d, :4], int(detections[d, 5]), float(detections[d, 4]))
+            track = self.tracks[t]
+            track.update(detections[d, :4], int(detections[d, 5]), float(detections[d, 4]))
+            if track.hits >= self.min_hits:
+                track.confirmed = True
 
         for d in unmatched_dets:
             self.tracks.append(
@@ -285,19 +326,34 @@ class Sort:
 
         results = []
         for track in self.tracks:
-            # Report a track once it has been seen min_hits times in a row. The
-            # frame_count exception matters for short clips and for tests: at
-            # the very start of a video there has not been time to accumulate
-            # a streak, and requiring one would show nothing for the opening
-            # frames.
-            established = track.hit_streak >= self.min_hits or self.frame_count <= self.min_hits
-            if track.time_since_update == 0 and established:
+            # A track is reported once it has been matched min_hits times, and
+            # stays reportable from then on.
+            #
+            # The obvious condition is `hit_streak >= min_hits`, which is what
+            # the SORT paper describes, but it behaves badly against a real
+            # detector. A missed frame resets hit_streak, so a track that had
+            # been followed for hundreds of frames would have to earn three
+            # consecutive detections again before being drawn. On the sample
+            # street clip, where confidence hovers near the threshold and the
+            # detector drops the occasional frame, that blanked out a live
+            # track on 21 frames: the object was detected and its ID was intact,
+            # but nothing was displayed. Latching the confirmation fixes that
+            # while still suppressing one-frame false positives, which never
+            # reach min_hits at all.
+            #
+            # The frame_count exception covers the opening frames, where there
+            # has not yet been time to accumulate any hits.
+            established = track.confirmed or self.frame_count <= self.min_hits
+            if track.time_since_update <= self.coast and established:
                 results.append(
                     {
                         "id": track.id,
                         "bbox": track.bbox,
                         "cls_id": track.cls_id,
                         "score": track.score,
+                        # False when this frame's box came from a detection,
+                        # True when it is the filter's prediction during a gap.
+                        "predicted": track.time_since_update > 0,
                     }
                 )
         return results

@@ -142,6 +142,100 @@ def test_single_frame_false_positive_suppressed() -> None:
     check("the real object is still reported", len(out) == 1)
 
 
+def test_confirmed_track_survives_flickering_detector() -> None:
+    print("\n--- detector drops single frames on an established track ---")
+    Sort.reset_ids()
+    tracker = Sort(max_age=30, min_hits=3)
+
+    # Establish the track properly first.
+    for frame in range(10):
+        tracker.update(np.array([box(100 + frame * 5, 200)]))
+
+    # Now alternate: detected, missed, detected, missed. This is what a real
+    # detector does when confidence sits near the threshold.
+    reported, ids = 0, set()
+    detected_frames = 0
+    for frame in range(10, 30):
+        missing = frame % 2 == 1
+        dets = np.empty((0, 6)) if missing else np.array([box(100 + frame * 5, 200)])
+        out = tracker.update(dets)
+        if not missing:
+            detected_frames += 1
+            if out:
+                reported += 1
+                ids.update(o["id"] for o in out)
+
+    # The regression this guards: with `hit_streak >= min_hits` as the display
+    # rule, a track never rebuilds a 3-frame streak under this pattern and is
+    # reported on none of these frames despite being alive and detected.
+    check("shown on every frame it was detected", reported == detected_frames,
+          f"{reported}/{detected_frames}")
+    check("and kept one ID throughout", len(ids) == 1, f"ids={sorted(ids)}")
+
+
+def test_class_label_survives_a_misclassified_frame() -> None:
+    print("\n--- detector misclassifies a single frame ---")
+    Sort.reset_ids()
+    tracker = Sort(max_age=30, min_hits=3)
+
+    # 2 is "car", 5 is "bus" in COCO. In the sample footage YOLO calls the car
+    # a bus on exactly one frame out of hundreds.
+    labels = []
+    for frame in range(20):
+        cls = 5 if frame == 12 else 2
+        out = tracker.update(np.array([box(100 + frame * 5, 200, cls_id=cls)]))
+        if out:
+            labels.append(out[0]["cls_id"])
+
+    check("never reports the one-frame misclassification",
+          all(c == 2 for c in labels), f"saw classes {sorted(set(labels))}")
+
+    # And the vote must still be able to change if the evidence really changes.
+    Sort.reset_ids()
+    t2 = Sort(max_age=30, min_hits=3)
+    for frame in range(3):
+        t2.update(np.array([box(100, 200, cls_id=2)]))
+    for frame in range(3, 20):
+        out = t2.update(np.array([box(100 + frame * 5, 200, cls_id=5)]))
+    check("a sustained class change is eventually adopted", out[0]["cls_id"] == 5,
+          f"got {out[0]['cls_id']}")
+
+
+def test_coasting_marks_predicted_boxes() -> None:
+    print("\n--- coasting through a detection gap ---")
+    Sort.reset_ids()
+    tracker = Sort(max_age=30, min_hits=3, coast=3)
+
+    for frame in range(10):
+        out = tracker.update(np.array([box(100 + frame * 5, 200)]))
+    check("a matched box is not flagged predicted", out[0]["predicted"] is False)
+
+    # Three missed frames: still reported, flagged as predictions.
+    flags, positions = [], []
+    for _ in range(3):
+        out = tracker.update(np.empty((0, 6)))
+        flags.append(bool(out) and out[0]["predicted"])
+        if out:
+            positions.append((out[0]["bbox"][0] + out[0]["bbox"][2]) / 2)
+
+    check("still reported during the gap", all(flags), f"{flags}")
+    check("and flagged as predicted", flags == [True, True, True])
+    check("the prediction keeps moving", len(positions) == 3 and positions[2] > positions[0],
+          f"{[round(p) for p in positions]}")
+
+    # Past the coast window it goes quiet, though the track is still alive.
+    out = tracker.update(np.empty((0, 6)))
+    check("silent once past the coast window", out == [], f"got {out}")
+    check("but the track still exists", len(tracker.tracks) == 1)
+
+    Sort.reset_ids()
+    strict = Sort(max_age=30, min_hits=3, coast=0)
+    for frame in range(10):
+        strict.update(np.array([box(100 + frame * 5, 200)]))
+    check("coast=0 reports nothing on a missed frame",
+          strict.update(np.empty((0, 6))) == [])
+
+
 def test_empty_input_is_safe() -> None:
     print("\n--- degenerate input ---")
     Sort.reset_ids()
@@ -177,6 +271,9 @@ def main() -> int:
     test_id_survives_brief_occlusion()
     test_track_retired_after_max_age()
     test_single_frame_false_positive_suppressed()
+    test_confirmed_track_survives_flickering_detector()
+    test_class_label_survives_a_misclassified_frame()
+    test_coasting_marks_predicted_boxes()
     test_empty_input_is_safe()
     test_class_and_score_carried()
 
