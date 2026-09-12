@@ -133,13 +133,19 @@ def main() -> int:
 
     classes = None if args.classes == ["all"] else args.classes
 
-    print(f"Loading {args.weights} ...")
-    detector = Detector(args.weights, conf=args.conf, classes=classes,
-                        imgsz=args.imgsz, device=args.device)
-    tracker = Sort(max_age=args.max_age, min_hits=args.min_hits,
-                   iou_threshold=args.iou, coast=args.coast)
-
-    cap, is_webcam = open_source(args.source)
+    # Mistyping a class name or a file path is a user error, not a crash. A
+    # traceback buries the useful sentence under a stack that the person who
+    # made the typo has no use for.
+    try:
+        print(f"Loading {args.weights} ...")
+        detector = Detector(args.weights, conf=args.conf, classes=classes,
+                            imgsz=args.imgsz, device=args.device)
+        tracker = Sort(max_age=args.max_age, min_hits=args.min_hits,
+                       iou_threshold=args.iou, coast=args.coast)
+        cap, is_webcam = open_source(args.source)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"\n{exc}")
+        return 1
     if not cap.isOpened():
         print(f"Could not open source: {args.source}")
         return 1

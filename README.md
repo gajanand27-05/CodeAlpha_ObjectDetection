@@ -125,18 +125,25 @@ unmatched.
 
 On an i5-12450HX with the CPU build of PyTorch, at 640px inference size:
 
-| Source | Resolution | Detection + tracking | Overall |
+| Source | Resolution | Overall | With `--save` |
 |---|---|---|---|
-| `people-detection.mp4` | 768x432 | 24 fps | 24.3 fps |
-| `person-bicycle-car-detection.mp4` | 768x432 | 24 fps | 25.2 fps |
-| Integrated webcam | 640x480 | 23.8 fps | 4.5 fps |
+| `people-detection.mp4` | 768x432 | 29.3 fps | 28.0 fps |
+| `person-bicycle-car-detection.mp4` | 768x432 | 29.5 fps | 28.1 fps |
+| Integrated webcam | 640x480 | 4.8 fps | not measured |
 
-The webcam row is the honest one. Detection and tracking take 42 ms per frame, so
-the pipeline itself runs at about 24 fps. The camera read takes 166 ms, capping the
-whole loop at roughly 6 fps. **The bottleneck is the camera, not the model**: this
-laptop's integrated camera drops its frame rate in low light because it lengthens
-exposure. Better lighting, or a camera that holds 30 fps, removes the gap. A CUDA
-build of PyTorch would speed up the 42 ms half but do nothing about the 166 ms half.
+Both clips run comfortably faster than real time, and writing the annotated video
+costs a little over 1 fps.
+
+The webcam row is the honest one, and worth explaining rather than hiding. Timing
+the two halves of the loop separately: detection and tracking take **36 ms** per
+frame, about 28 fps, while a single camera read takes **172 ms**. The bottleneck is
+the camera, not the model. This laptop's integrated camera lengthens its exposure in
+low light and drops to under 6 fps as a result, and no amount of model optimisation
+changes that. Better lighting, or a camera that holds 30 fps, closes the gap. A CUDA
+build of PyTorch would speed up the 36 ms half and do nothing about the 172 ms half.
+
+Measure the parts before optimising the whole: the first assumption was that the
+model was too slow, and it was not.
 
 ## Known limitations
 
@@ -173,6 +180,12 @@ python get_sample_videos.py    # optional, downloads two test clips
 YOLO weights download automatically on first run. Weights, videos and output are
 all excluded from git.
 
+One Windows note: installing PyTorch into a venv that sits under a very long path
+can fail with `WinError 206: The filename or extension is too long`. Some of the
+files inside the torch package are deeply nested, and the full path can exceed the
+260 character limit. Clone somewhere short, such as `D:\CodeAlpha_ObjectDetection`,
+or enable long paths in Windows.
+
 ## Usage
 
 ```bash
@@ -196,11 +209,12 @@ Useful options:
 | `--iou` | 0.3 | Overlap needed to call a detection the same object |
 | `--coast` | 3 | Frames a track keeps being drawn from prediction after a missed detection |
 | `--weights` | yolov8n.pt | Any YOLO checkpoint |
+| `--imgsz` | 640 | Inference image size. Smaller is faster and misses more |
 | `--device` | auto | `cpu`, or `0` for the first GPU |
 
 ## Tests
 
-`python test_tracker.py` runs 30 checks against synthetic trajectories rather than
+`python test_tracker.py` runs 32 checks against synthetic trajectories rather than
 video. A video test would depend on the detector, the weights and the clip all being
 correct at once, so a failure would not say which part broke. With generated boxes
 the input is exact, so any failure belongs to the tracker.

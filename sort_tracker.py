@@ -285,7 +285,9 @@ class Sort:
         tracker still needs to age its tracks, and skipping the call would
         freeze them in place.
 
-        Returns one dict per confirmed track with keys id, bbox, cls_id, score.
+        Returns one dict per reportable track with keys id, bbox, cls_id,
+        score and predicted, where predicted is True when the box came from
+        the filter during a detection gap rather than from a detection.
         """
         self.frame_count += 1
         if detections is None or len(detections) == 0:
