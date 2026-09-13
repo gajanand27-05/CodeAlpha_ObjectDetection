@@ -252,6 +252,20 @@ def test_empty_input_is_safe() -> None:
     check("degenerate box produces no NaN",
           all(np.all(np.isfinite(o["bbox"])) for o in out))
 
+    # The (N, 6) shape is the whole contract between the detector and the
+    # tracker, and it used to be enforced with reshape(-1, 6). That accepts any
+    # array whose size divides by 6, so six rows missing the class column became
+    # five rows with every field shifted along by one: no error, plausible
+    # boxes, entirely wrong. A wrong shape has to be loud.
+    try:
+        Sort().update(np.array([[10.0, 10.0, 50.0, 90.0, 0.9]] * 6))
+        check("a missing column is rejected, not reshaped", False)
+    except ValueError:
+        check("a missing column is rejected, not reshaped", True)
+
+    check("a single flat row of six is still accepted",
+          len(Sort(min_hits=1).update(np.array([10.0, 10.0, 50.0, 90.0, 0.9, 0.0]))) == 1)
+
 
 def test_class_and_score_carried() -> None:
     print("\n--- class and score are carried through ---")

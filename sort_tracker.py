@@ -292,7 +292,22 @@ class Sort:
         self.frame_count += 1
         if detections is None or len(detections) == 0:
             detections = np.empty((0, 6), dtype=np.float32)
-        detections = np.asarray(detections, dtype=np.float64).reshape(-1, 6)
+        # atleast_2d so a single detection can still be passed as a flat row of
+        # six, which is unambiguous. Anything else has to have the right shape.
+        detections = np.atleast_2d(np.asarray(detections, dtype=np.float64))
+
+        # The column count is checked rather than reshaped into. `reshape(-1, 6)`
+        # accepts any array whose total size divides by 6, so a detector that
+        # emitted [x1, y1, x2, y2, score] with the class column missing turned
+        # six 5-column rows into five 6-column ones, silently, with every field
+        # shifted. Boxes came out looking plausible and were completely wrong.
+        # The array shape is this module's entire contract with the detector, so
+        # it is worth one explicit check.
+        if detections.ndim != 2 or detections.shape[1] != 6:
+            raise ValueError(
+                "detections must be an (N, 6) array of "
+                f"[x1, y1, x2, y2, score, class_id], got shape {detections.shape}"
+            )
 
         # 1. PREDICT. Any track whose filter produces a non-finite box is
         # dropped rather than propagated: one NaN would poison every IoU

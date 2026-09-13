@@ -214,7 +214,7 @@ Useful options:
 
 ## Tests
 
-`python test_tracker.py` runs 32 checks against synthetic trajectories rather than
+`python test_tracker.py` runs 34 checks against synthetic trajectories rather than
 video. A video test would depend on the detector, the weights and the clip all being
 correct at once, so a failure would not say which part broke. With generated boxes
 the input is exact, so any failure belongs to the tracker.

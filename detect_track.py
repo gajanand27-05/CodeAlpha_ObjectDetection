@@ -1,9 +1,9 @@
 """Real-time object detection and tracking.
 
-    python detect_track.py                                   webcam
-    python detect_track.py --source videos/people.mp4        video file
-    python detect_track.py --source 0 --save out.mp4         record the output
-    python detect_track.py --source clip.mp4 --no-show       headless, no window
+    python detect_track.py                                        webcam
+    python detect_track.py --source videos/people-detection.mp4   video file
+    python detect_track.py --source 0 --save output/demo.mp4      record the output
+    python detect_track.py --source clip.mp4 --no-show            headless, no window
 
 Press q or Esc in the window to stop early.
 
